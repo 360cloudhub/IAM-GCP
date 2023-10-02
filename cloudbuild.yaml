@@ -1,0 +1,26 @@
+steps:
+  - name: 'gcr.io/cloud-builders/git'
+    args: ['clone', '--depth=1', 'https://source.developers.google.com/p/ndjokka/r/gcp-iam-python', 'repo']
+
+  - name: 'python'
+    args: [ 'pip3', 'install', '-r', 'repo/requirements.txt']
+
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+      - 'functions'
+      - 'deploy'
+      - 'gcp-iam-fun'
+      - '--runtime'
+      - 'python310'
+      - '--trigger-http'
+      - '--entry-point'
+      - 'main_call_fun'  
+      - '--timeout'
+      - '300s'  # Set the timeout to 5 minutes
+
+
+# images:
+#   - 'gcr.io/ndjokka/gcp-iam-fun'
+
+options:
+  logging: CLOUD_LOGGING_ONLY  
