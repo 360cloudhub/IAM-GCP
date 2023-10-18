@@ -52,7 +52,7 @@ def get_key_usage(service_account_email: str, key_data: dict) -> dict:
         
         response = requests.get(url, headers={'Authorization': f'Bearer {credentials.token}'})
         response_data = response.json()
-        print(response_data)
+        # print(response_data)
 
         return {
             "last_used_time": response_data.get("lastUsedTime", "N/A"),
@@ -204,10 +204,75 @@ def service_request(credentials):
     return credentials.authorized_session()
 
 
+def trigger():
+    config = configparser.ConfigParser()
+    config.read('config.ini')  # Provide the path to your INI file
 
-def main_call_fun(request):
+    # Get the configuration values from the INI file
+    google_cloud_config = config['GoogleCloud']
+
+    # Replace with your own values from the INI file
+    project_id = google_cloud_config.get('PROJECT_ID')
+    secret_name = google_cloud_config.get('SECRET_NAME')
+    # service_account_email = google_cloud_config.get('service_account_email')
+    location =  google_cloud_config.get('location')  
+    function_name =  google_cloud_config.get('functionname')
+
+    # Create a Secret Manager client
+    client = secretmanager.SecretManagerServiceClient()
+
+    # Access the latest version of the secret
+    secret_version = client.access_secret_version(name=f"projects/{project_id}/secrets/{secret_name}/versions/latest")
+
+    # Get the JSON data from the secret
+    json_data1 = secret_version.payload.data.decode("UTF-8")
+    # json_data = json.loads(json_data1)
+    # Clean the data by removing newlines and spaces
+    j =  json_data1.replace("\n","").split(",")
+    # Print the JSON data
+    data_str = "{\n" + ",\n".join(j) + "\n}"
+
+    # Parse the string as JSON
+    parsed_data = json.loads(data_str)
+
+    # Print the JSON object
+    j = json.dumps(parsed_data, indent=2)
+    # print(j)
+    # pip install google-cloud-documentai
+    url = f"https://{location}-{project_id}.cloudfunctions.net/{function_name}"
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = j
+    json_credentials = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    data_dict = json.loads(j)
+    # print(data_dict)
+    # Create a credentials object from the JSON string
+    credentials = service_account.Credentials.from_service_account_info(
+        data_dict, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+    )
+
+    # Build the authenticated service
+    service = build("cloudfunctions", "v1", credentials=credentials)
+    # print(data_dict)
+    # Make a request to the function (you can pass request data if needed)
+    # response = service.projects().locations().functions().call(
+    #     name = f"projects/{project_id}/locations/us-central1/functions/gcp-iam-fun",
+    #     body={"data":j}
+
+    # ).execute()
+    return j
+
+
+
+
+
+
+def main_call_fun(request,context):
+
     try:
-        request_json = request.get_json(silent=True)
+        # request_json = request.get_json(silent=True)
+        data_dict = json.loads(trigger())
+        request_json = data_dict
+        
+ 
         # Load configuration from the INI file
         config = configparser.ConfigParser()
         config.read('config.ini')
@@ -222,9 +287,9 @@ def main_call_fun(request):
         print(service_account_key_file)
         # Create a temporary directory
         temp_dir = tempfile.mkdtemp()
-
+        print(request_json.get("type", "N/A"))      
         # Full path to the temporary XLSX file
-        temp_xlsx_file = os.path.join(temp_dir, 'service_account_data.xlsx')
+        temp_xlsx_file = os.path.join(temp_dir, blob_name)
         secret_json = {
                         "type": request_json.get("type", "N/A"),
                         "project_id": request_json.get("project_id", "N/A"),
@@ -238,7 +303,7 @@ def main_call_fun(request):
                         "client_x509_cert_url": request_json.get("client_x509_cert_url", "N/A"),
                         "universe_domain": request_json.get("universe_domain", "N/A")
                         }
-        
+        # print(secret_json)
         # Check if any key has the value "N/A"
         if any(value == "N/A" for value in secret_json.values()):
             raise ValueError("Error: One or more keys have the value 'N/A'")
@@ -247,7 +312,7 @@ def main_call_fun(request):
             # Write the secret to a local file
         with open(local_file_path, 'w') as f:
             json.dump(secret_json, f)
-
+        print(local_file_path)
         SERVICE_ACCOUNT_KEY_PATH = local_file_path
         create_credentials(SERVICE_ACCOUNT_KEY_PATH)
         # List keys for all service accounts and IAM policies for all service accounts
@@ -265,9 +330,21 @@ def main_call_fun(request):
             iam_policies_df.to_excel(writer, sheet_name='IAMPolicies', index=False)
             user_data.to_excel(writer, sheet_name='userinfo', index=False)
 
-        # Upload the XLSX file from the temporary directory to the specified Google Cloud Storage bucket
-        upload_to_gcp_temp_bucket(temp_xlsx_file, bucket_name, blob_name)
+        bucket_name = bucket_name
+        file_path = temp_xlsx_file  # Replace with the path to the file you want to upload
+        client = storage.Client.from_service_account_info(secret_json)
 
+        # client = storage.Client()
+        bucket = client.get_bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+
+        blob.upload_from_filename(file_path)
+
+        print(f"File {file_path} uploaded to {bucket_name}/{blob_name}.")
         return f"File {temp_xlsx_file} uploaded to {bucket_name}/{blob_name}."
     except Exception as e:
         return f"Error: {str(e)}"
+
+
+
+# main_call_fun("request")
